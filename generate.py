@@ -2,12 +2,17 @@
 generate.py — Inference script for MiniLLM-MoE.
 
 Loads a trained checkpoint and generates text.
-Supports single-prompt and interactive chat modes.
+Supports single-prompt, batch, and interactive chat modes.
+Reasoning models can show or hide <think>...</think> blocks.
 
 Usage:
   python generate.py --checkpoint checkpoints/best_30m.pt --prompt "Hello"
   python generate.py --checkpoint checkpoints/best_1b.pt  --interactive
   python generate.py --checkpoint checkpoints/best_1b.pt  --n 3 --prompt "Once upon"
+
+For reasoning models:
+  python generate.py --checkpoint checkpoints/best_70m_reasoning.pt \\
+    --prompt "Question: What is 12 * 34?" --show_thinking
 
 Interactive commands:
   :temp <float>    change sampling temperature
@@ -148,15 +153,34 @@ def main():
                    help="Number of completions to generate")
     p.add_argument("--interactive",    action="store_true",
                    help="Enter interactive chat mode")
+    p.add_argument("--show_thinking",  action="store_true",
+                   help="For reasoning models: show <think>...</think> blocks in output")
     args = p.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     print(f"Loading: {args.checkpoint}")
 
-    model  = load_model(args.checkpoint, device)
+    model    = load_model(args.checkpoint, device)
     n_params = model.count_parameters()
-    print(f"Model loaded ({n_params / 1e6:.1f}M params)\n")
+
+    # Detect reasoning model from checkpoint metadata
+    ckpt         = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
+    model_type   = ckpt.get("args", {}).get("model_type", "standard")
+    is_reasoning = model_type == "reasoning"
+
+    print(f"Model loaded ({n_params / 1e6:.1f}M params)")
+    if is_reasoning:
+        print("Type: Reasoning model — use 'Question: ...' prompts")
+        if not args.show_thinking:
+            print("Tip: add --show_thinking to see the full reasoning chain\n")
+    print()
+
+    def _postprocess(text: str) -> str:
+        if is_reasoning and not args.show_thinking:
+            from reasoning import strip_thinking
+            return strip_thinking(text)
+        return text
 
     if args.interactive:
         interactive_mode(
@@ -171,7 +195,7 @@ def main():
         for i, text in enumerate(completions, 1):
             if args.n > 1:
                 print(f"\n─── Completion {i}/{args.n} ───")
-            print(text)
+            print(_postprocess(text))
 
 
 if __name__ == "__main__":

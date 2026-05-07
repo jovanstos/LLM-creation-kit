@@ -40,9 +40,17 @@ def parse_args():
     p.add_argument("--preset",         default="30m",
                    choices=["30m", "70m", "125m", "350m", "1b", "1.5b"])
     p.add_argument("--dataset",        default="shakespeare",
-                   choices=["shakespeare", "binary", "fineweb", "dolma"])
+                   choices=["shakespeare", "binary", "fineweb", "dolma",
+                            "custom_hf", "gsm8k", "metamath", "openhermes"])
     p.add_argument("--bin_path",       default=None,
                    help="Path to .bin file (required for --dataset binary)")
+    p.add_argument("--hf_dataset_name", default=None,
+                   help="HuggingFace dataset repo id (for --dataset custom_hf)")
+    p.add_argument("--hf_text_col",    default="text",
+                   help="Text column name in the HF dataset (for --dataset custom_hf)")
+    p.add_argument("--model_type",     default="standard",
+                   choices=["standard", "reasoning"],
+                   help="Model type: 'standard' for LM, 'reasoning' for CoT training")
     p.add_argument("--max_steps",      type=int,   default=5000)
     p.add_argument("--batch_size",     type=int,   default=8,
                    help="Micro-batch size per step")
@@ -58,9 +66,9 @@ def parse_args():
     p.add_argument("--grad_clip",      type=float, default=1.0,
                    help="Gradient norm clip threshold (0 = disabled)")
     p.add_argument("--use_8bit_adam",  action="store_true",
-                   help="Use bitsandbytes 8-bit AdamW (~75% less optimizer VRAM)")
+                   help="Use bitsandbytes 8-bit AdamW (~75 pct less optimizer VRAM)")
     p.add_argument("--compile",        action="store_true",
-                   help="torch.compile() the model (~20-30%% speedup after warmup)")
+                   help="torch.compile() the model (~20-30 pct speedup after warmup)")
     p.add_argument("--context_len",    type=int,   default=None,
                    help="Override context length from preset")
     p.add_argument("--checkpoint_dir", default="checkpoints")
@@ -257,6 +265,8 @@ def main():
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         bin_path=args.bin_path,
+        hf_dataset_name=args.hf_dataset_name,
+        hf_text_col=args.hf_text_col,
     )
 
     # ── Resume ────────────────────────────────────────────────────────────────
@@ -289,8 +299,10 @@ def main():
     log_fh = open(log_path, "w")
 
     eff_batch = args.batch_size * args.grad_accum
-    print(f"\nTraining {args.preset} for {args.max_steps} steps")
+    print(f"\nTraining {args.preset} ({args.model_type}) for {args.max_steps} steps")
     print(f"Effective batch: {eff_batch} sequences × {config.context_len} tokens")
+    if args.model_type == "reasoning":
+        print("Mode: Reasoning (chain-of-thought) — <think>...</think> format")
     print(f"Log: {log_path}\n")
 
     # ── Main loop ─────────────────────────────────────────────────────────────

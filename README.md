@@ -1,154 +1,282 @@
-# LLM Creation Kit w/MoE
+# LLM Creation Kit
 
-A decoder-only transformer with Mixture of Experts (MoE), trained from scratch on consumer hardware.
-
-**Target:** NVIDIA RTX 4070 (12 GB VRAM) · Intel i5-10600K · 16 GB RAM  
-**Scale ladder:** 30M → 70M → 125M → 350M → 1B → 1.5B
-
----
-
-## Architecture
+Build your own large language model from scratch — from a 30M smoke test all the way to a 1.5B flagship model. You can also edit the code if you'd like to go further. Includes an interactive TUI wizard, reasoning model support, and Mixture-of-Experts architecture.
 
 ```
-Token Embedding (vocab_size × hidden_dim)
-    │
-    ▼  × n_layers
-┌─────────────────────────────────┐
-│  RMSNorm (pre-norm)             │
-│  Grouped Query Attention + RoPE │
-│  + Residual                     │
-│                                 │
-│  RMSNorm (pre-norm)             │
-│  MoE FFN                        │
-│    ┌──────────────────────┐     │
-│    │ Router (linear gate) │     │
-│    │  → top-K expert idx  │     │
-│    └──────────────────────┘     │
-│    Expert 0 (SwiGLU) ─┐         │
-│    Expert 1 (SwiGLU)  ├─ sum    │
-│    ...                 │        │
-│    Expert N (SwiGLU) ─┘         │
-│  + Residual                     │
-└─────────────────────────────────┘
-    │
-    ▼
-Final RMSNorm → LM Head (tied weights)
+ ██╗     ██╗     ███╗   ███╗    ██╗  ██╗██╗████████╗
+ ██║     ██║     ████╗ ████║    ██║ ██╔╝██║╚══██╔══╝
+ ██║     ██║     ██╔████╔██║    █████╔╝ ██║   ██║
+ ██║     ██║     ██║╚██╔╝██║    ██╔═██╗ ██║   ██║
+ ███████╗███████╗██║ ╚═╝ ██║    ██║  ██╗██║   ██║
+ ╚══════╝╚══════╝╚═╝     ╚═╝    ╚═╝  ╚═╝╚═╝   ╚═╝
+              C R E A T I O N   K I T  v1.0
 ```
 
-**Key design choices:**
+---
 
-| Component           | Choice                 | Why                                                |
-| ------------------- | ---------------------- | -------------------------------------------------- |
-| Positional encoding | RoPE                   | Better length generalisation than learned absolute |
-| FFN activation      | SwiGLU                 | Consistently better than ReLU/GELU at all scales   |
-| Normalisation       | RMSNorm pre-norm       | More stable training, faster (no mean subtraction) |
-| Attention           | GQA (n_kv < n_q)       | Smaller KV cache at inference, same quality        |
-| FFN type            | MoE (8 experts, top-2) | More params, same compute per token                |
-| Tokenizer           | GPT-2 BPE (tiktoken)   | 50,257 vocab, fast, no training required           |
-| Embedding           | Input = Output weights | Reduces params ~10%, standard practice             |
+## What is this?
 
-### Why MoE?
+A self-contained Python toolkit for training decoder-only transformer LLMs on consumer hardware (tested on RTX 4070 12 GB). The architecture mirrors modern models like LLaMA-2/3 and Mixtral:
 
-A standard transformer activates 100% of its FFN parameters per token.
-MoE routes each token to only K of N experts, so the 1.5B model activates
-~25% of FFN params per token — quality of a large model, compute of a small one.
+| Component           | Choice                            | Why                                |
+| ------------------- | --------------------------------- | ---------------------------------- |
+| Positional encoding | RoPE                              | Better length generalization       |
+| Normalization       | RMSNorm (pre-norm)                | Faster, more stable than LayerNorm |
+| Attention           | Grouped Query Attention (GQA)     | Smaller KV cache at inference      |
+| FFN                 | Mixture of Experts (MoE) + SwiGLU | Same compute, higher capacity      |
+| Tokenizer           | GPT-2 BPE (tiktoken)              | No training required               |
+| Embeddings          | Tied input/output weights         | ~10% fewer parameters              |
+
+A 1.5B MoE model activates only ~25% of its FFN parameters per token — the quality of a large model at the compute of a smaller one.
 
 ---
 
-## Scale Presets
+## Quick start
 
-| Preset | Total params | n_layers | hidden_dim | n_experts | Context |
-| ------ | ------------ | -------- | ---------- | --------- | ------- |
-| 30m    | ~33M         | 6        | 384        | 4         | 512     |
-| 70m    | ~85M         | 8        | 512        | 8         | 1024    |
-| 125m   | ~180M        | 12       | 768        | 8         | 1024    |
-| 350m   | ~500M        | 24       | 1024       | 8         | 2048    |
-| 1b     | ~1.3B        | 32       | 2048       | 8         | 2048    |
-| 1.5b   | ~1.8B        | 32       | 2048       | 8         | 2048    |
+### 1. Install dependencies
 
----
+```bash
+# Install PyTorch with CUDA first
+pip install torch --index-url https://download.pytorch.org/whl/cu130
 
-## Installation
-
-```powershell
-pip install torch --index-url https://download.pytorch.org/whl/cu121
+# Then everything else
 pip install -r requirements.txt
-python -c "import torch; print(torch.cuda.get_device_name(0))"
+```
+
+### 2. Run the interactive wizard
+
+```bash
+python kit.py
+```
+
+The wizard walks you through every choice and launches training for you. That's it.
+
+---
+
+## The Wizard (`kit.py`)
+
+`kit.py` is a step-by-step TUI that guides you through building your model:
+
+```
+Step 1  Model Type          Standard LM  or  Reasoning (chain-of-thought)
+Step 2  Model Scale         30M → 1.5B, or define a custom architecture
+Step 3  Dataset             Shakespeare, FineWeb, Dolma, any HF dataset, or your .txt file
+Step 4  Hyperparameters     Smart defaults per preset, all adjustable
+Step 5  Early Stopping      Halt training when val_loss plateaus
+Step 6  Advanced Options    8-bit AdamW, torch.compile, W&B logging, GGUF export
+Step 7  Context Length      Override the default for your preset
+Step 8  Output              Checkpoint and log directories
+        Review              Full configuration table before launch
+        Save Config         Export to YAML for reproducibility
+        Launch              Streams training output live
+```
+
+Resume from a saved config:
+
+```bash
+python kit.py --load my_llm_config.yaml
 ```
 
 ---
 
-## Training — Scale Ladder
+## Training directly (without the wizard)
 
-Always start with the 30M smoke test before investing time in larger runs.
+```bash
+# 30M smoke test — verify your setup (~10 min)
+python train.py --preset 30m --dataset shakespeare --max_steps 500
 
-> **Note:** `--patience 3` enables early stopping — training halts automatically if validation loss stops improving for 3 consecutive eval checks. Use it for Shakespeare runs. Leave it off for FineWeb (the dataset is too large to overfit).
+# 70M on Shakespeare (~1 hour)
+python train.py --preset 70m --dataset shakespeare --max_steps 5000 \
+  --batch_size 12 --grad_accum 4 --lr 3e-4 --patience 3
 
-### Stage 1 — 30M Smoke Test (~10 min)
+# 125M on FineWeb (~8 hours)
+python train.py --preset 125m --dataset fineweb --max_steps 50000 \
+  --batch_size 8 --grad_accum 8 --use_8bit_adam --patience 5
 
-Expected final loss: ~2.5–3.0 on Shakespeare (our hardware beats the original estimates).
+# 1B on FineWeb (~1 week)
+python train.py --preset 1b --dataset fineweb --max_steps 500000 \
+  --batch_size 4 --grad_accum 16 --use_8bit_adam --patience 5
 
-```powershell
-python train.py --preset 30m --dataset shakespeare --max_steps 500 --batch_size 16 --grad_accum 2 --lr 3e-4 --warmup_steps 50 --eval_interval 100 --log_interval 20 --patience 3
+# Resume interrupted training
+python train.py --preset 1b --dataset fineweb --max_steps 500000 \
+  --batch_size 4 --grad_accum 16 --use_8bit_adam \
+  --resume checkpoints/best_1b.pt
 ```
 
-### Stage 2 — 70M First Real Model (~45 min–1.5 hrs)
+### Custom HuggingFace dataset
 
-```powershell
-python train.py --preset 70m --dataset shakespeare --max_steps 5000 --batch_size 12 --grad_accum 4 --lr 3e-4 --warmup_steps 200 --patience 3
+Stream any text dataset from HuggingFace — never downloads fully:
+
+```bash
+python train.py --preset 70m \
+  --dataset custom_hf \
+  --hf_dataset_name "HuggingFaceFW/fineweb-edu" \
+  --hf_text_col "text" \
+  --max_steps 10000
 ```
 
-### Stage 3 — 125M FineWeb (~6–8 hours)
+### Custom text file
 
-```powershell
-python train.py --preset 125m --dataset fineweb --max_steps 50000 --batch_size 8 --grad_accum 8 --lr 3e-4 --warmup_steps 500 --use_8bit_adam --eval_interval 2000 --save_interval 5000 --patience 5
+```bash
+# Tokenize your file first
+python -c "from data import prepare_text_file; prepare_text_file('corpus.txt', 'data/corpus.bin')"
+
+# Train on it
+python train.py --preset 70m --dataset binary --bin_path data/corpus.bin --max_steps 5000
 ```
 
-### Stage 4 — 350M Quality Milestone (~1–2 days)
+---
 
-```powershell
-python train.py --preset 350m --dataset fineweb --max_steps 200000 --batch_size 6 --grad_accum 12 --lr 2e-4 --warmup_steps 1000 --use_8bit_adam --context_len 2048 --eval_interval 5000 --save_interval 10000 --patience 5
+## Reasoning Models
+
+Reasoning models output structured chain-of-thought before their final answer, similar to DeepSeek-R1 and o1-style models. The pattern used:
+
+```
+Question: What is 12 × 34?
+<think>
+I need to multiply 12 by 34.
+12 × 30 = 360
+12 × 4  = 48
+360 + 48 = 408
+</think>
+<answer>
+408
+</answer>
 ```
 
-### Stage 5 — 1B Main Target (~1–2 weeks)
+### Train a reasoning model
 
-```powershell
-python train.py --preset 1b --dataset fineweb --max_steps 500000 --batch_size 4 --grad_accum 16 --lr 2e-4 --min_lr 2e-5 --warmup_steps 2000 --use_8bit_adam --context_len 2048 --eval_interval 5000 --save_interval 5000 --patience 5
+```bash
+# Quick test — Shakespeare with reasoning format
+python train.py --preset 30m --dataset shakespeare --model_type reasoning --max_steps 500
+
+# Math reasoning — GSM8K (8,500 grade-school problems)
+python train.py --preset 70m --dataset gsm8k --model_type reasoning --max_steps 5000
+
+# Larger math reasoning — MetaMathQA (395K augmented problems)
+python train.py --preset 125m --dataset metamath --model_type reasoning \
+  --max_steps 50000 --use_8bit_adam
+
+# General reasoning — OpenHermes 2.5 (1M+ instruction/reasoning pairs)
+python train.py --preset 350m --dataset openhermes --model_type reasoning \
+  --max_steps 100000 --use_8bit_adam
 ```
 
-### Stage 6 — 1.5B Flagship (~2–3 weeks)
+> **Tip:** For best results, pre-train on FineWeb first (standard mode), then fine-tune on a reasoning dataset. This mirrors how production reasoning models are built.
 
-```powershell
-python train.py --preset 1.5b --dataset fineweb --max_steps 750000 --batch_size 2 --grad_accum 24 --lr 1.5e-4 --min_lr 1.5e-5 --warmup_steps 3000 --use_8bit_adam --context_len 2048 --eval_interval 5000 --save_interval 5000 --patience 5
+### Generate with a reasoning model
+
+```bash
+# Hide the thinking process (show only the answer)
+python generate.py \
+  --checkpoint checkpoints/best_70m.pt \
+  --prompt "Question: If a train travels 60 mph for 2.5 hours, how far does it go?" \
+  --max_new_tokens 300
+
+# Show the full thinking chain
+python generate.py \
+  --checkpoint checkpoints/best_70m.pt \
+  --prompt "Question: If a train travels 60 mph for 2.5 hours, how far does it go?" \
+  --max_new_tokens 300 \
+  --show_thinking
 ```
 
-### Resuming a run
+---
 
-```powershell
-python train.py --preset 1b --dataset fineweb --max_steps 500000 --batch_size 4 --grad_accum 16 --lr 2e-4 --min_lr 2e-5 --warmup_steps 2000 --use_8bit_adam --context_len 2048 --eval_interval 5000 --save_interval 5000 --resume checkpoints/best_1b.pt
-```
+## Model Scale Reference
+
+| Preset | Params | VRAM   | Time (RTX 4070) | Context |
+| ------ | ------ | ------ | --------------- | ------- |
+| 30m    | 30M    | ~2 GB  | ~10 min         | 512     |
+| 70m    | 70M    | ~3 GB  | ~1 hr           | 1024    |
+| 125m   | 125M   | ~5 GB  | ~8 hrs          | 1024    |
+| 350m   | 350M   | ~8 GB  | ~2 days         | 2048    |
+| 1b     | 1B     | ~10 GB | ~1 week         | 2048    |
+| 1.5b   | 1.5B   | ~12 GB | ~3 weeks        | 2048    |
+
+For 1B+: enable `--use_8bit_adam` (75% less optimizer VRAM) and gradient checkpointing (automatic).
 
 ---
 
 ## Inference
 
-```powershell
+```bash
+# Single prompt
 python generate.py --checkpoint checkpoints/best_30m.pt --prompt "Once upon a time"
-```
 
-```powershell
-python generate.py --checkpoint checkpoints/best_1b.pt --n 3 --prompt "The future of AI"
-```
+# Multiple completions
+python generate.py --checkpoint checkpoints/best_70m.pt --prompt "The future of AI" --n 3
 
-```powershell
+# Interactive chat
 python generate.py --checkpoint checkpoints/best_1b.pt --interactive
 ```
+
+Interactive commands:
+
+```
+:temp 0.7      change sampling temperature
+:topk 40       change top-k filter
+:tokens 500    change max new tokens
+:quit          exit
+```
+
+### Sampling parameters
+
+| Flag               | Default | Effect                                      |
+| ------------------ | ------- | ------------------------------------------- |
+| `--temperature`    | 0.8     | < 1 = sharper, > 1 = more random            |
+| `--top_k`          | 50      | Keep only top-K logits                      |
+| `--top_p`          | 0.9     | Nucleus: keep smallest set summing to ≥ 0.9 |
+| `--max_new_tokens` | 200     | Tokens to generate                          |
+
+---
+
+## Supported Datasets
+
+| Name           | Flag          | Source                 | Size      | Best for          |
+| -------------- | ------------- | ---------------------- | --------- | ----------------- |
+| Shakespeare    | `shakespeare` | Auto-download          | ~1 MB     | Smoke tests       |
+| FineWeb        | `fineweb`     | HuggingFaceFW/fineweb  | Streaming | General LM        |
+| Dolma          | `dolma`       | allenai/dolma          | Streaming | Diverse LM        |
+| Custom HF      | `custom_hf`   | Any HF repo            | Streaming | Any text domain   |
+| Custom file    | `binary`      | Your .txt              | Any       | Private data      |
+| GSM8K          | `gsm8k`       | openai/gsm8k           | 8.5K      | Math reasoning    |
+| MetaMathQA     | `metamath`    | meta-math/MetaMathQA   | 395K      | Math reasoning    |
+| OpenHermes 2.5 | `openhermes`  | teknium/OpenHermes-2.5 | 1M+       | General reasoning |
+
+---
+
+## GGUF Export (llama.cpp / Ollama)
+
+```bash
+# Clone llama.cpp
+git clone https://github.com/ggerganov/llama.cpp
+pip install -r llama.cpp/requirements.txt safetensors
+
+# Export and quantize
+python convert_gguf.py \
+  --checkpoint checkpoints/best_1b.pt \
+  --output models/my-llm-q4.gguf \
+  --quantize q4_k_m
+
+# Run with Ollama
+echo 'FROM ./my-llm-q4.gguf' > Modelfile
+ollama create my-llm -f Modelfile
+ollama run my-llm
+```
+
+| Quantization | Size ratio | Quality                      |
+| ------------ | ---------- | ---------------------------- |
+| `f16`        | 2× model   | Lossless                     |
+| `q8_0`       | 1× model   | Near-lossless                |
+| `q4_k_m`     | 0.5× model | Recommended (best trade-off) |
+| `q4_0`       | 0.5× model | Slightly lower quality       |
 
 ---
 
 ## MoE Diagnostics
 
-After 10 000+ training steps, check expert load balance:
+Monitor expert load balance during or after training:
 
 ```python
 from model import MiniLLM, ModelConfig
@@ -157,105 +285,138 @@ from moe_utils import get_expert_load, print_expert_load_table, get_router_confi
 import torch
 
 device = torch.device("cuda")
-ckpt   = torch.load("checkpoints/best_350m.pt", map_location=device)
-model  = MiniLLM(ModelConfig(**ckpt["model_config"])).to(device)
+ckpt   = torch.load("checkpoints/best_70m.pt", map_location=device, weights_only=False)
+config = ModelConfig(**ckpt["model_config"])
+model  = MiniLLM(config).to(device)
 model.load_state_dict(ckpt["model_state"])
 
-_, val_loader = get_dataloaders("shakespeare", context_len=1024, batch_size=4)
+_, val_loader = get_dataloaders("shakespeare", config.context_len, batch_size=4)
 
 load = get_expert_load(model, val_loader, device, n_batches=100)
 print_expert_load_table(load)
-get_router_confidence(model, val_loader, device)
+
+confidence = get_router_confidence(model, val_loader, device)
+print(f"Router confidence: {confidence:.3f}")
 ```
 
-Healthy output: each expert used 15–35% of token slots.  
-If any expert is < 5% or > 40%, increase `aux_loss_coeff` (default 0.01 → try 0.05).
+Healthy ranges:
 
----
-
-## GGUF Export (Ollama / llama.cpp)
-
-```powershell
-git clone https://github.com/ggerganov/llama.cpp
-pip install -r llama.cpp/requirements.txt safetensors
-```
-
-```powershell
-python convert_gguf.py --checkpoint checkpoints/best_1.5b.pt --output models/minillm-1.5b-q4.gguf --quantize q4_k_m
-```
-
-```powershell
-ollama create minillm-1.5b -f Modelfile
-ollama run minillm-1.5b
-```
-
-**Quantized sizes:**
-
-| Model | fp16    | int8    | int4    |
-| ----- | ------- | ------- | ------- |
-| 30M   | ~66 MB  | ~33 MB  | ~17 MB  |
-| 70M   | ~170 MB | ~85 MB  | ~43 MB  |
-| 125M  | ~360 MB | ~180 MB | ~90 MB  |
-| 350M  | ~1.0 GB | ~500 MB | ~250 MB |
-| 1B    | ~3.8 GB | ~1.9 GB | ~950 MB |
-| 1.5B  | ~5.5 GB | ~2.8 GB | ~1.4 GB |
-
----
-
-## VRAM Budget (1.5B, all optimizations enabled)
-
-| Component                     | VRAM        |
-| ----------------------------- | ----------- |
-| Model weights (bf16)          | ~3.6 GB     |
-| Activations (grad checkpoint) | ~2.5 GB     |
-| Optimizer states (8-bit Adam) | ~1.8 GB     |
-| KV cache + misc               | ~1.5 GB     |
-| **Total**                     | **~9.4 GB** |
-
-Without optimizations: ~24+ GB (OOM on 12 GB card).
+- Expert usage: 15–35% per expert (for 8 experts, top-2)
+- Router confidence: > 0.6 = good specialization; < 0.4 = still early training
+- If any expert > 40%: increase `aux_loss_coeff` from 0.01 → 0.05
 
 ---
 
 ## Training Metrics Reference
 
-| Metric                       | Healthy range                 | Warning sign                     |
-| ---------------------------- | ----------------------------- | -------------------------------- |
-| Initial loss                 | ~10.8                         | Stuck at 10.8 → model not on GPU |
-| Final loss (Shakespeare 70M) | 3.0–3.5                       | Not decreasing → check data      |
-| Final loss (FineWeb 1B)      | 2.5–2.8                       | —                                |
-| Perplexity                   | < 30 = learning real language | —                                |
-| aux_loss                     | 0.001–0.05                    | Large → reduce aux_loss_coeff    |
-| tok/s (1B on RTX 4070)       | 500–900                       | < 300 → data bottleneck          |
-| grad_norm                    | 0.5–2.0                       | Spikes > 10 → instability        |
+| Metric                       | Healthy range                 | Warning                              |
+| ---------------------------- | ----------------------------- | ------------------------------------ |
+| Initial loss                 | ~10.8                         | Stuck at 10.8 → model not on GPU     |
+| Final loss (Shakespeare 70M) | 3.0–3.5                       | Not decreasing → check data pipeline |
+| Final loss (FineWeb 1B)      | 2.5–2.8                       | —                                    |
+| Perplexity                   | < 30 = learning real language | —                                    |
+| tok/s (1B on RTX 4070)       | 500–900                       | < 300 → data loading bottleneck      |
+| grad_norm                    | 0.5–2.0                       | Spikes > 10 → instability            |
+| aux_loss                     | 0.001–0.05                    | Large → reduce aux_loss_coeff        |
 
 ---
 
 ## File Structure
 
 ```
-miniLLM/
-├── model.py          # Full model: config, architecture, MoE, generation
-├── train.py          # Training loop with all VRAM optimizations
-├── data.py           # Data pipeline: Shakespeare, binary, HF streaming
-├── generate.py       # Inference + interactive chat CLI
-├── moe_utils.py      # Router analysis, expert load visualization
-├── convert_gguf.py   # Export trained model to GGUF for llama.cpp/Ollama
+LLM-creation-kit/
+├── kit.py           ← TUI wizard — start here
+├── train.py         ← Training loop
+├── generate.py      ← Text generation / interactive chat
+├── model.py         ← Model architecture (RoPE, GQA, MoE, SwiGLU)
+├── data.py          ← Dataset pipeline (Shakespeare, HF streaming, binary)
+├── reasoning.py     ← Chain-of-thought dataset formatting + streaming
+├── config.py        ← YAML config save/load
+├── moe_utils.py     ← MoE expert load diagnostics
+├── convert_gguf.py  ← Export to GGUF for llama.cpp / Ollama
 ├── requirements.txt
-├── README.md
-├── .gitignore
-├── data/             # Tokenized datasets (gitignored)
-├── checkpoints/      # Model checkpoints (gitignored)
-└── logs/             # JSONL training logs (gitignored)
+├── checkpoints/     ← (generated) .pt training checkpoints
+├── data/            ← (generated) cached tokenized datasets
+└── logs/            ← (generated) JSONL training logs
 ```
 
 ---
 
-## Preparing Custom Data
+## Architecture Deep-Dive
 
-```powershell
-python -c "from data import prepare_text_file; prepare_text_file('my_corpus.txt', 'data/my_corpus.bin')"
+### Why MoE (Mixture of Experts)?
+
+A dense transformer uses 100% of FFN parameters per token. MoE uses only top-K of N experts per token, so:
+
+- Same computation per token as K/N of the FFN
+- Total capacity of N experts
+- A 1.5B MoE model uses ~400M active params per token (top-2 of 8 experts)
+
+### Key components
+
+**RoPE** — Rotary Position Embeddings encode position by rotating Q and K vectors. Better length generalization than learned absolute positions.
+
+**RMSNorm** — Root Mean Square normalization. No mean subtraction = faster, equally stable. Used pre-attention and pre-FFN (pre-norm architecture like LLaMA).
+
+**GQA** — Grouped Query Attention. Fewer K/V heads than Q heads; each group of Q heads shares one K/V head. Reduces KV cache at inference with negligible quality loss.
+
+**SwiGLU** — `output = down(silu(gate(x)) * up(x))`. Three linear layers per expert. Consistently outperforms ReLU/GELU at all scales.
+
+**MoE Router** — A linear gate layer assigns each token to its top-K experts. An auxiliary load-balancing loss prevents expert collapse (all tokens routing to 1-2 experts).
+
+### VRAM budget (1.5B, all optimizations)
+
+| Component                      | VRAM        |
+| ------------------------------ | ----------- |
+| Model weights (bf16)           | 3.6 GB      |
+| Activations (grad checkpoint)  | 2.5 GB      |
+| Optimizer states (8-bit AdamW) | 1.8 GB      |
+| KV cache + misc                | 1.5 GB      |
+| **Total**                      | **~9.4 GB** |
+
+Without optimizations: 24+ GB (out-of-memory on 12 GB VRAM).
+
+---
+
+## Configuration Reference
+
+All `train.py` flags (also exposed in the wizard):
+
+```
+--preset          30m|70m|125m|350m|1b|1.5b
+--dataset         shakespeare|binary|fineweb|dolma|custom_hf|gsm8k|metamath|openhermes
+--model_type      standard|reasoning
+--hf_dataset_name <HuggingFace repo id>   (for custom_hf)
+--hf_text_col     <column name>           (for custom_hf, default: text)
+--bin_path        <path to .bin file>     (for binary dataset)
+--max_steps       int
+--batch_size      int   (micro-batch per step)
+--grad_accum      int   (effective_batch = batch_size × grad_accum)
+--lr              float (peak learning rate)
+--min_lr          float (cosine decay floor)
+--warmup_steps    int
+--weight_decay    float (default 0.1, 2D+ params only)
+--grad_clip       float (gradient norm clip, 0 = off)
+--context_len     int   (override preset default)
+--eval_interval   int
+--save_interval   int
+--patience        int   (early stopping; 0 = disabled)
+--use_8bit_adam        (bitsandbytes 8-bit AdamW)
+--compile              (torch.compile ~20% speedup)
+--resume          <checkpoint path>
+--checkpoint_dir  checkpoints/
+--log_dir         logs/
+--sample_prompt   "Once upon a time"
 ```
 
-```powershell
-python train.py --preset 70m --dataset binary --bin_path data/my_corpus.bin
-```
+---
+
+## License
+
+MIT — do whatever you want with it, I made this project just for fun.
+
+---
+
+## Acknowledgements
+
+Architecture inspired by [LLaMA 2](https://arxiv.org/abs/2307.09288), [Mixtral](https://arxiv.org/abs/2401.04088), and Andrej Karpathy's [nanoGPT](https://github.com/karpathy/nanoGPT). Tokenizer from [tiktoken](https://github.com/openai/tiktoken). Reasoning format inspired by [DeepSeek-R1](https://arxiv.org/abs/2501.12948).

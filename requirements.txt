@@ -1,5 +1,5 @@
 # ── Core ──────────────────────────────────────────────────────────────────────
-# Install PyTorch FIRST with CUDA support, separately:
+# Install PyTorch FIRST with CUDA support (separately):
 #   pip install torch --index-url https://download.pytorch.org/whl/cu121
 # Then install everything else:
 #   pip install -r requirements.txt
@@ -27,6 +27,11 @@ safetensors>=0.4.0       # Required by convert_gguf.py
 
 # ── Monitoring ────────────────────────────────────────────────────────────────
 wandb>=0.16.0            # Optional: set WANDB_DISABLED=true to skip
+
+# ── TUI (kit.py wizard) ───────────────────────────────────────────────────────
+rich>=13.7.0             # Beautiful terminal output (panels, tables, progress)
+questionary>=2.0.1       # Interactive prompts (select, checkbox, text, confirm)
+pyyaml>=6.0              # YAML config save/load
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 tqdm>=4.65.0

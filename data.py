@@ -169,19 +169,24 @@ def get_dataloaders(
     batch_size: int,
     num_workers: int = 2,
     bin_path: Optional[str] = None,
+    hf_dataset_name: Optional[str] = None,
+    hf_text_col: str = "text",
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Single entry point that returns (train_loader, val_loader).
 
-    For streaming datasets (fineweb, dolma) the val_loader uses Shakespeare
-    so perplexity is comparable across all training runs.
+    For streaming datasets (fineweb, dolma, custom_hf, reasoning) the
+    val_loader uses Shakespeare so perplexity is comparable across runs.
 
     Args:
-        dataset_name: one of [shakespeare, binary, fineweb, dolma]
-        context_len:  matches model's context_len
-        batch_size:   micro-batch size per forward pass
-        num_workers:  DataLoader workers (raise to 4 if data is the bottleneck)
-        bin_path:     required only when dataset_name == 'binary'
+        dataset_name:    one of [shakespeare, binary, fineweb, dolma,
+                         custom_hf, gsm8k, metamath, openhermes]
+        context_len:     matches model's context_len
+        batch_size:      micro-batch size per forward pass
+        num_workers:     DataLoader workers
+        bin_path:        required only when dataset_name == 'binary'
+        hf_dataset_name: HuggingFace dataset repo id (for custom_hf)
+        hf_text_col:     text column name in the HF dataset (for custom_hf)
     """
     pin = True  # always pin memory for faster CPU→GPU transfer
 
@@ -223,9 +228,39 @@ def get_dataloaders(
                        num_workers=num_workers, pin_memory=pin),
         )
 
+    if dataset_name == "custom_hf":
+        if hf_dataset_name is None:
+            raise ValueError(
+                "--hf_dataset_name is required for dataset_name='custom_hf'"
+            )
+        train_ds = StreamingTextDataset(
+            hf_dataset_name, context_len, text_column=hf_text_col
+        )
+        val_ds = ShakespeareDataset(context_len, split="val")
+        return (
+            DataLoader(train_ds, batch_size=batch_size,
+                       num_workers=num_workers, pin_memory=pin),
+            DataLoader(val_ds,   batch_size=batch_size, shuffle=False,
+                       num_workers=num_workers, pin_memory=pin),
+        )
+
+    # Reasoning datasets (gsm8k, metamath, openhermes)
+    _reasoning_datasets = ("gsm8k", "metamath", "openhermes")
+    if dataset_name in _reasoning_datasets:
+        from reasoning import ReasoningStreamDataset
+        train_ds = ReasoningStreamDataset(dataset_name, context_len)
+        val_ds   = ShakespeareDataset(context_len, split="val")
+        return (
+            DataLoader(train_ds, batch_size=batch_size,
+                       num_workers=num_workers, pin_memory=pin),
+            DataLoader(val_ds,   batch_size=batch_size, shuffle=False,
+                       num_workers=num_workers, pin_memory=pin),
+        )
+
     raise ValueError(
         f"Unknown dataset '{dataset_name}'. "
-        "Choose from: shakespeare, binary, fineweb, dolma"
+        "Choose from: shakespeare, binary, fineweb, dolma, custom_hf, "
+        "gsm8k, metamath, openhermes"
     )
 
 
