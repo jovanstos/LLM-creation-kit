@@ -1,0 +1,32 @@
+# ── Core ──────────────────────────────────────────────────────────────────────
+# Install PyTorch FIRST with CUDA support, separately:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+# Then install everything else:
+#   pip install -r requirements.txt
+# Verify CUDA:
+#   python -c "import torch; print(torch.cuda.get_device_name(0))"
+
+torch>=2.1.0
+numpy>=1.24.0
+
+# ── Tokenizer ─────────────────────────────────────────────────────────────────
+tiktoken>=0.5.0
+
+# ── HuggingFace ecosystem ─────────────────────────────────────────────────────
+transformers>=4.36.0
+datasets>=2.14.0
+huggingface_hub>=0.19.0
+accelerate>=0.24.0
+peft>=0.7.0              # LoRA fine-tuning post-pretraining
+
+# ── VRAM optimisation ─────────────────────────────────────────────────────────
+bitsandbytes>=0.41.0     # 8-bit AdamW optimizer (--use_8bit_adam flag)
+
+# ── GGUF export ───────────────────────────────────────────────────────────────
+safetensors>=0.4.0       # Required by convert_gguf.py
+
+# ── Monitoring ────────────────────────────────────────────────────────────────
+wandb>=0.16.0            # Optional: set WANDB_DISABLED=true to skip
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+tqdm>=4.65.0
