@@ -310,7 +310,8 @@ def main():
     train_iter       = iter(train_loader)
     tokens_seen      = 0
     step             = start_step
-    t0               = time.perf_counter()
+    train_start      = time.perf_counter()   # never resets — total elapsed clock
+    t0               = time.perf_counter()   # resets each log interval
     no_improve_count = 0   # consecutive eval intervals without val_loss improvement
 
     while step < args.max_steps:
@@ -352,8 +353,9 @@ def main():
 
         # ── Logging ───────────────────────────────────────────────────────────
         if step % args.log_interval == 0:
-            t1  = time.perf_counter()
-            dt  = max(t1 - t0, 1e-6)
+            t1           = time.perf_counter()
+            dt           = max(t1 - t0, 1e-6)       # seconds for this interval
+            elapsed_total = t1 - train_start          # seconds since training began
             tps = (
                 args.batch_size * args.grad_accum
                 * config.context_len
@@ -362,19 +364,31 @@ def main():
             t0  = t1
             ppl = math.exp(min(step_loss, 20.0))
 
+            # Format total elapsed as HH:MM:SS
+            elapsed_h = int(elapsed_total // 3600)
+            elapsed_m = int((elapsed_total % 3600) // 60)
+            elapsed_s = int(elapsed_total % 60)
+            elapsed_str = f"{elapsed_h:02d}:{elapsed_m:02d}:{elapsed_s:02d}"
+
+            # Format interval duration as e.g. "12.3s"
+            interval_str = f"{dt:.1f}s"
+
             row = {
-                "step":        step,
-                "loss":        round(step_loss, 4),
-                "ppl":         round(ppl, 2),
-                "lr":          round(lr, 8),
-                "tok_per_sec": int(tps),
-                "tokens_seen": tokens_seen,
-                "grad_norm":   round(grad_norm, 4),
+                "step":          step,
+                "loss":          round(step_loss, 4),
+                "ppl":           round(ppl, 2),
+                "lr":            round(lr, 8),
+                "tok_per_sec":   int(tps),
+                "tokens_seen":   tokens_seen,
+                "grad_norm":     round(grad_norm, 4),
+                "elapsed":       elapsed_str,
+                "interval_secs": round(dt, 1),
             }
             log_fh.write(json.dumps(row) + "\n")
             log_fh.flush()
 
             print(
+                f"[{elapsed_str}] (+{interval_str}) "
                 f"step {step:6d} | loss {step_loss:.4f} | ppl {ppl:7.1f} | "
                 f"lr {lr:.2e} | tok/s {tps:,.0f} | grad_norm {grad_norm:.2f}"
             )
